@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Color Puzzle Shooter</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #1a1a1a; font-family: 'Helvetica Neue', Arial, sans-serif; touch-action: none; }
+        canvas { display: block; background: #000; margin: 0 auto; }
+        #ui { position: absolute; top: 10px; left: 10px; color: white; font-size: 20px; pointer-events: none; z-index: 5; }
+        
+        /* 説明画面（オーバーレイ）のスタイル */
+        #startScreen {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.85);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            text-align: center;
+            z-index: 10;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        .instruction-box {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 20px;
+            border-radius: 15px;
+            margin-bottom: 20px;
+            border: 1px solid #444;
+        }
+
+        h1 { color: #FF3366; margin-bottom: 10px; }
+        p { line-height: 1.6; font-size: 16px; }
+        
+        #startBtn {
+            padding: 15px 40px;
+            font-size: 20px;
+            background: #33FF99;
+            border: none;
+            border-radius: 50px;
+            color: #000;
+            font-weight: bold;
+            cursor: pointer;
+            box-shadow: 0 4px 15px rgba(51, 255, 153, 0.4);
+        }
+    </style>
+</head>
+<body>
+    <div id="ui">Score: <span id="score">0</span></div>
+
+    <div id="startScreen">
+        <h1>COLOR BURST</h1>
+        <div class="instruction-box">
+            <p><strong>【遊び方】</strong></p>
+            <p>1. スワイプで左右に移動</p>
+            <p>2. <strong>自分と同じ色</strong>の敵を撃つと爆破！</p>
+            <p>3. 違う色の敵は倒すのに時間がかかるぞ</p>
+            <p>4. 3秒ごとに自分の色が変わるので注意！</p>
+        </div>
+        <button id="startBtn">ゲーム開始</button>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+    
+
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const scoreElement = document.getElementById('score');
+const startScreen = document.getElementById('startScreen');
+const startBtn = document.getElementById('startBtn');
+
+function resize() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ゲームの状態管理
+let isGameRunning = false;
+let score = 0;
+const colors = ['#FF3366', '#33FF99', '#3366FF']; // 赤、緑、青（ぷよっぽい発色）
+
+// --- 【修正】プレイヤーをかわいいキャラにする定義 ---
+const player = {
+    x: canvas.width / 2,
+    y: canvas.height - 100, // 少し上に配置
+    radius: 25, // 四角形の幅(50)から、半径25の丸に
+    color: colors[0],
+    speed: 7 // PC操作時の速さ
+};
+
+let bullets = [];
+let enemies = [];
+let spawnInterval, colorInterval;
+
+// キーボードの状態
+const keys = {};
+
+// イベントリスナー: キーボード
+window.addEventListener('keydown', (e) => { keys[e.code] = true; });
+window.addEventListener('keyup', (e) => { keys[e.code] = false; });
+
+// イベントリスナー: タッチ（スマホ用）
+canvas.addEventListener('touchmove', (e) => {
+    if (!isGameRunning) return;
+    const touch = e.touches[0];
+    player.x = touch.clientX;
+}, { passive: false }); // スクロール防止
+
+function startGame() {
+    isGameRunning = true;
+    score = 0;
+    scoreElement.innerText = score;
+    bullets = [];
+    enemies = [];
+    startScreen.style.display = 'none';
+
+    // インターバル開始
+    spawnInterval = setInterval(spawnEnemy, 1000);
+    // 3秒ごとに色が変わる
+    colorInterval = setInterval(() => {
+        player.color = colors[Math.floor(Math.random() * colors.length)];
+    }, 3000);
+
+    update();
+}
+
+startBtn.addEventListener('click', startGame);
+
+function spawnEnemy() {
+    if (!isGameRunning) return;
+    const size = 30 + Math.random() * 20;
+    enemies.push({
+        x: Math.random() * canvas.width,
+        y: -size,
+        size: size,
+        color: colors[Math.floor(Math.random() * colors.length)],
+        speed: 1 + Math.random() * 2
+    });
+}
+
+// --- 【新規】かわいいキャラを描画する関数 ---
+function drawPuyoPlayer(x, y, radius, color) {
+    ctx.save();
+    ctx.translate(x, y);
+
+    // 1. 体（ジェル状の丸）
+    ctx.beginPath();
+    ctx.arc(0, 0, radius, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+    
+    // 少しぷよぷよ感を出すための光沢（ハイライト）
+    ctx.beginPath();
+    ctx.arc(-radius * 0.4, -radius * 0.4, radius * 0.3, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+    ctx.fill();
+
+    // 2. 目（白目）
+    const eyeOffsetX = radius * 0.35; // 体の中心からのズレ
+    const eyeOffsetY = -radius * 0.1; // 少し上
+    const eyeRadiusX = radius * 0.28; // 目の横幅
+    const eyeRadiusY = radius * 0.4;  // 目の縦幅
+
+    ctx.fillStyle = 'white';
+    // 左目
+    ctx.beginPath();
+    ctx.ellipse(-eyeOffsetX, eyeOffsetY, eyeRadiusX, eyeRadiusY, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // 右目
+    ctx.beginPath();
+    ctx.ellipse(eyeOffsetX, eyeOffsetY, eyeRadiusX, eyeRadiusY, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 3. 黒目（瞳）
+    ctx.fillStyle = '#333'; // 真っ黒より少しグレー
+    const pupilRadius = eyeRadiusX * 0.6; // 瞳のサイズ
+
+    // 左瞳
+    ctx.beginPath();
+    ctx.arc(-eyeOffsetX, eyeOffsetY, pupilRadius, 0, Math.PI * 2);
+    ctx.fill();
+    // 右瞳
+    ctx.beginPath();
+    ctx.arc(eyeOffsetX, eyeOffsetY, pupilRadius, 0, Math.PI * 2);
+    ctx.fill();
+    
+    // 瞳のハイライト
+    ctx.fillStyle = 'white';
+    ctx.beginPath();
+    ctx.arc(-eyeOffsetX + 2, eyeOffsetY - 3, 2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(eyeOffsetX + 2, eyeOffsetY - 3, 2, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+}
+
+function update() {
+    if (!isGameRunning) return;
+
+    // --- プレイヤーの移動処理 (キーボード) ---
+    if (keys['ArrowLeft'] || keys['KeyA']) {
+        player.x -= player.speed;
+    }
+    if (keys['ArrowRight'] || keys['KeyD']) {
+        player.x += player.speed;
+    }
+
+    // --- 【修正】画面端の制限を半径で計算 ---
+    if (player.x < player.radius) player.x = player.radius;
+    if (player.x > canvas.width - player.radius) player.x = canvas.width - player.radius;
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // --- 【修正】プレイヤーをかわいいキャラで描画 ---
+    drawPuyoPlayer(player.x, player.y, player.radius, player.color);
+
+    // 弾生成
+    if (Math.random() > 0.9) {
+        // 弾はキャラの上部から発射
+        bullets.push({ x: player.x, y: player.y - player.radius, color: player.color });
+    }
+
+    // 弾の更新
+    bullets.forEach((b, i) => {
+        b.y -= 7;
+        ctx.fillStyle = b.color;
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, 5, 0, Math.PI * 2);
+        ctx.fill();
+        if (b.y < 0) bullets.splice(i, 1);
+    });
+
+    // 敵の更新
+    enemies.forEach((en, i) => {
+        en.y += en.speed;
+        ctx.fillStyle = en.color;
+        ctx.beginPath();
+        ctx.arc(en.x, en.y, en.size, 0, Math.PI * 2);
+        ctx.fill();
+
+        bullets.forEach((b, bi) => {
+            const dist = Math.hypot(b.x - en.x, b.y - en.y);
+            if (dist < en.size) {
+                bullets.splice(bi, 1);
+                if (b.color === en.color) {
+                    enemies.splice(i, 1);
+                    score += 10;
+                    scoreElement.innerText = score;
+                    if (navigator.vibrate) navigator.vibrate(20);
+                }
+            }
+        });
+
+        if (en.y > canvas.height) {
+            gameOver();
+        }
+    });
+
+    requestAnimationFrame(update);
+}
+
+function gameOver() {
+    isGameRunning = false;
+    clearInterval(spawnInterval);
+    clearInterval(colorInterval);
+    alert("Game Over! Score: " + score);
+    startScreen.style.display = 'flex';
+}
+
+
+
+
+    </script>
+</body>
+</html>
